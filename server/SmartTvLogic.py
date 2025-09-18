@@ -1,9 +1,3 @@
-# Message class to carry information to the server
-class Message:
-    def __init__(self, success: bool, message: str):
-        self.success
-        self.message
-
 # Business logic for the smart tv
 class SmartTV:
     def __init__(self, available_channels):
@@ -11,32 +5,44 @@ class SmartTV:
         self.available_channels = available_channels
         self.active_channel = 1
     
-    def turnOn(self) -> Message:
+    def turnOn(self):
         if self.is_on:
-            return Message(False, "Smart TV is already turned on")
+            return False, "Smart TV is already turned on"
         self.is_on = True
-        return Message(True, "Smart TV is turned on")
+        return True, "Smart TV is turned on"
     
-    def turnOff(self) -> Message:
+    def turnOff(self):
         if not self.is_on:
-            return Message(False, "Smart TV is already turned off")
+            return False, "Smart TV is already turned off"
         self.is_on = False
-        return Message(True, "Smart TV is turned off")
-        
-    def getNumberOfChannels(self) -> Message:
-        if not self.is_on:
-            return Message(False, "Smart TV is off | Unable to complete this request")
-        return Message(True, f"Total number of channels: {self.available_channels}")
-
-    def getChannel(self) -> Message:
-        if not self.is_on:
-            return Message(False, "Smart TV is off | Unable to complete this request")
-        return self.active_channel
+        return True, "Smart TV is turned off"
     
-    def setChannel(self, channel: int) -> Message:
+    def getNumberOfChannels(self):
         if not self.is_on:
-            return Message(False, "Smart TV is off | Unable to complete this request")
-        if channel > self.available_channels:
-            return Message(False, f"Channel {channel} is out of range, valid range: 1-{self.available_channels}")
+            return False, "Smart TV is off | Unable to complete this request"
+        return True, f"Total number of channels: {self.available_channels}"
+
+    def getChannel(self):
+        if not self.is_on:
+            return False, "Smart TV is off | Unable to complete this request"
+        return True, f"Active channel: {self.active_channel}"
+    
+    def setChannel(self, channel: int):
+        if not self.is_on:
+            return False, "Smart TV is off | Unable to complete this request"
+        if channel < 1 or channel > self.available_channels:
+            return False, f"Channel {channel} is out of range, valid range: 1-{self.available_channels}"
         self.active_channel = channel
-        return Message(True, f"Active channel set to: {channel}")
+        return True, f"Active channel set to: {channel}"
+    
+    def downChannel(self):
+        if self.active_channel == 1:
+            return False, "Channel cannot go any lower than channel 1"
+        self.active_channel -= 1
+        return True, f"Channel went down to {self.active_channel}"
+    
+    def upChannel(self):
+        if self.active_channel == self.available_channels:
+            return False, f"Channel cannot go any higher than channel {self.available_channels}"
+        self.active_channel += 1
+        return True, f"Channel went up to {self.active_channel}"
