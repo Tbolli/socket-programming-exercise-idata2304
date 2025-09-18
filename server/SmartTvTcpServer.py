@@ -1,4 +1,5 @@
 import socket
+from SmartTvLogic import SmartTV, Message
 
 
 class SmartTVServer:
@@ -102,7 +103,6 @@ class SmartTVServer:
                 if len(command_parts) < 3:
                     self.send_response(conn, "Channel set is missing a value")
                     return
-
                 try:
                     new_channel = int(command_parts[2])
                 except ValueError:
