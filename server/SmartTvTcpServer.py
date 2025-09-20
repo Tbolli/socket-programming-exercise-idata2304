@@ -1,6 +1,10 @@
 import socket
 from SmartTvLogic import SmartTV
-from Colors import Colors
+from helpers.ProtocolConfig import Protocol
+from helpers.Colors import Colors
+from transport.BaseTransport import BaseTransport
+from transport.TcpTransport import TcpTransport
+from transport.UdpTransport import UdpTransport
 
 
 class SmartTVServer:
@@ -8,118 +12,99 @@ class SmartTVServer:
 
     BUFFER_SIZE = 128
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 65432, available_channels: int = 120):
-        self.host = host
-        self.port = port
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    def __init__(self, transport: BaseTransport, available_channels: int):
         self.smart_tv = SmartTV(available_channels)
+        self.transport = transport
+        self.dispatch_map = {
+            Protocol.COMMANDS["TURN_ON"]: self.handle_turn_on,
+            Protocol.COMMANDS["TURN_OFF"]: self.handle_turn_off,
+            Protocol.COMMANDS["STATUS"]: self.handle_status,
+            Protocol.COMMANDS["CHANNEL_TOTAL"]: self.handle_channel_total,
+            Protocol.COMMANDS["CHANNEL_ACTIVE"]: self.handle_channel_active,
+            Protocol.COMMANDS["CHANNEL_SET"]: self.handle_channel_set,
+            Protocol.COMMANDS["CHANNEL_DOWN"]: self.handle_channel_down,
+            Protocol.COMMANDS["CHANNEL_UP"]: self.handle_channel_up,
+            Protocol.COMMANDS["QUIT"]: self.handle_quit,
+        }
 
     def start(self):
-        """Start the SmartTV server and wait for incoming connections."""
-        try:
-            self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen()
-            print(f"Server listening on {self.host}:{self.port}")
-
-            while True:
-                conn, addr = self.server_socket.accept()
-                print(f"Connection established with {addr}")
-                self.handle_client(conn)
-
-        except Exception as e:
-            print(Colors.colorize(f"Server error: {e}", False))
-        finally:
-            self.shutdown()
+       self.transport.start()
 
     def handle_client(self, conn: socket.socket):
         """Handle requests from a single client until it disconnects."""
         try:
-            with conn:
-                while True:
-                    data = conn.recv(self.BUFFER_SIZE)
-                    if not data:
-                        print("Client disconnected")
+            while True:
+                data = conn.recv(self.BUFFER_SIZE)
+                if not data:
+                    print("Client disconnected")
+                    break
+
+                command_parts = data.decode(errors="ignore").strip().lower().split()
+                if not command_parts:
+                    self.send_response(conn, "Invalid command")
+                    continue
+
+                # Try to match the longest possible command
+                for length in range(len(command_parts), 0, -1):
+                    candidate = " ".join(command_parts[:length])
+                    handler = self.dispatch_map.get(candidate)
+                    if handler:
+                        should_break = handler(conn, command_parts[length:])
+                        if should_break:  # quit handler can signal disconnect
+                            return
                         break
-
-                    command_parts = data.decode(errors="ignore").strip().lower().split()
-                    if not command_parts:
-                        self.send_response(conn, "Invalid command")
-                        continue
-
-                    command = command_parts[0]
-                    if command == "turn":
-                        self.handle_turn(conn, command_parts)
-                    elif command == "status":
-                        self.handle_status(conn)
-                    elif command == "channel":
-                        self.handle_channel(conn, command_parts)
-                    elif command == "quit":
-                        self.handle_quit(conn)
-                        break  # exit client loop, only closes this client
-                    else:
-                        self.handle_unsupported(conn)
+                else:
+                    self.handle_unsupported(conn)
 
         except Exception as e:
             print(Colors.colorize(f"Error handling client: {e}", False))
-
-    def handle_turn(self, conn: socket.socket, parts: list[str]):
-        """Handle 'turn on/off' commands."""
-        if len(parts) < 2:
-            self.send_response(conn, "Usage: turn <on|off>")
-            return
-
-        action = parts[1]
-        if action == "on":
-            success, msg = self.smart_tv.turnOn()
-        elif action == "off":
-            success, msg = self.smart_tv.turnOff()
-        else:
-            self.send_response(conn, "Usage: turn <on|off>")
-            return
-
+    
+    # Handlers
+    def handle_turn_on(self, conn, _):
+        success, msg = self.smart_tv.turnOn()
         self.send_response(conn, Colors.colorize(msg, success))
 
-    def handle_status(self, conn: socket.socket):
-        """Report whether the SmartTV is on or off."""
+    def handle_turn_off(self, conn, _):
+        success, msg = self.smart_tv.turnOff()
+        self.send_response(conn, Colors.colorize(msg, success))
+
+    def handle_status(self, conn, _):
         state = "on" if self.smart_tv.is_on else "off"
         self.send_response(conn, f"Smart TV is {state}")
 
-    def handle_channel(self, conn: socket.socket, parts: list[str]):
-        """Handle channel-related commands."""
-        if len(parts) < 2:
-            self.send_response(conn, "Usage: channel <total|active|set <#int>|down|up>")
+    def handle_channel_total(self, conn, _):
+        success, msg = self.smart_tv.getNumberOfChannels()
+        self.send_response(conn, Colors.colorize(msg, success))
+
+    def handle_channel_active(self, conn, _):
+        success, msg = self.smart_tv.getChannel()
+        self.send_response(conn, Colors.colorize(msg, success))
+
+    def handle_channel_set(self, conn, args):
+        if not args:
+            self.send_response(conn, f"Usage: {Protocol.COMMANDS['CHANNEL_SET']} <#int>")
             return
-
-        action = parts[1]
         try:
-            if action == "total":
-                success, msg = self.smart_tv.getNumberOfChannels()
-            elif action == "active":
-                success, msg = self.smart_tv.getChannel()
-            elif action == "set":
-                if len(parts) < 3:
-                    self.send_response(conn, Colors.colorize("Channel set is missing a value", False))
-                    return
-                try:
-                    new_channel = int(parts[2])
-                except ValueError:
-                    self.send_response(conn, Colors.colorize("Channel set value must be an integer", False))
-                    return
-                success, msg = self.smart_tv.setChannel(new_channel)
-            elif action == "down":
-                success, msg = self.smart_tv.downChannel()
-            elif action == "up":
-                success, msg = self.smart_tv.upChannel()
-            else:
-                self.send_response(conn, "Usage: channel <total|active|set <#int>|down|up>")
-                return
+            new_channel = int(args[0])
+        except ValueError:
+            self.send_response(conn, Colors.colorize("Channel must be an integer", False))
+            return
+        success, msg = self.smart_tv.setChannel(new_channel)
+        self.send_response(conn, Colors.colorize(msg, success))
 
-            self.send_response(conn, Colors.colorize(msg, success))
+    def handle_channel_down(self, conn, _):
+        success, msg = self.smart_tv.downChannel()
+        self.send_response(conn, Colors.colorize(msg, success))
 
-        except Exception as e:
-            error_msg = f"Error in handle_channel: {e}"
-            print(Colors.colorize(error_msg, False))
-            self.send_response(conn, Colors.colorize(error_msg, False))
+    def handle_channel_up(self, conn, _):
+        success, msg = self.smart_tv.upChannel()
+        self.send_response(conn, Colors.colorize(msg, success))
+
+    def handle_quit(self, conn, _):
+        msg = "Connection closed by client request"
+        print(Colors.colorize(msg, False))
+        self.send_response(conn, msg)
+        return True  # signal to close client connection
 
     def handle_unsupported(self, conn: socket.socket):
         """Handle unsupported commands."""
@@ -130,12 +115,7 @@ class SmartTVServer:
     @staticmethod
     def send_response(conn: socket.socket, message: str):
         """Send a message to the client."""
-        conn.sendall((message + "\n").encode())
-
-    def handle_quit(self, conn: socket.socket):
-        msg = "Connection closed by client request"
-        print(Colors.colorize(msg, False))
-        self.send_response(conn, msg)
+        conn.send(message)
 
     def shutdown(self):
         """Shutdown the server socket gracefully."""
@@ -144,5 +124,14 @@ class SmartTVServer:
 
 
 if __name__ == "__main__":
-    server = SmartTVServer()
+    host, port = "127.0.0.1", 65432
+
+    # Switch between TCP and UDP here
+    # transport = TcpTransport(host, port, server)
+    # transport = UcpTransport(host, port, server)
+    transport = UdpTransport(host, port, None)
+    available_channels = 120
+
+    server = SmartTVServer(transport, available_channels)
+    server.transport.server = server  # inject back-reference
     server.start()
