@@ -124,7 +124,7 @@ class SmartTVServer:
 
 
 if __name__ == "__main__":
-    host, port = "127.0.0.1", 65432
+    host, port = "127.0.0.1", 65431
 
     # Switch between TCP and UDP here
     # transport = TcpTransport(host, port, server)

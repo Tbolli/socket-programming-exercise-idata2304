@@ -13,7 +13,7 @@ def choose_protocol():
 def get_address():
     while True:
         try:
-            host_str, port_str = input("Enter SmartTV address <127.0.0.1:65432> or type 'quit' to exit:\n>> ").strip().split(":")
+            host_str, port_str = input("Enter SmartTV address <127.0.0.1:65431> or type 'quit' to exit:\n>> ").strip().split(":")
             return host_str, int(port_str)
         except ValueError:
             print("Invalid format. Use <IP:PORT>.")
@@ -31,6 +31,30 @@ def main():
         try:
             host_str, port_str = addr_input.split(":")
             address = (host_str, int(port_str))
+
+            s = socket.socket(socket.AF_INET, protocol)
+            if protocol == socket.SOCK_STREAM:
+                s.connect()
+            print(f"Connected to {address}")
+
+            while True:
+                user_input = input(">> ").strip()
+                if user_input.lower() in ("quit", "exit"):
+                    print("Closing connection.")
+                    break
+                
+                if protocol == socket.SOCK_DGRAM:
+                    s.sendto(bytes(user_input,"utf-8"),address)
+                    data, _ = s.recvfrom(4096)
+                    print(data.decode("utf-8", "ignore"))
+                elif protocol == socket.SOCK_STREAM:
+                    s.sendall(user_input.encode())
+                    response = s.recv(128).decode(errors="ignore")
+                    print(response)
+            
+            if protocol == socket.SOCK_STREAM:
+                s.close()
+
 
             with socket.socket(socket.AF_INET, protocol) as s:
                 if protocol == socket.SOCK_STREAM:
