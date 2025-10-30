@@ -1,79 +1,128 @@
 import socket
+import threading
+import sys
 
+PROMPT = ">> "
+print_lock = threading.Lock()  # prevent message overlap from threads
+
+
+# ------------------- Thread-safe print -------------------
+def safe_print(*args, **kwargs):
+    """Thread-safe print that repositions the input prompt correctly."""
+    with print_lock:
+        # Clear the current input line
+        sys.stdout.write("\r")
+        sys.stdout.flush()
+        print(*args, **kwargs)
+        # Reprint the prompt cleanly
+        sys.stdout.write(PROMPT)
+        sys.stdout.flush()
+
+
+# ------------------- Protocol Selection -------------------
 def choose_protocol():
     while True:
-        choice = input("Which protocol would you like to use (write either 1 or 2):\n1. TCP\n2. UDP\n>> ").strip()
+        choice = input("Which protocol would you like to use? (1 = TCP, 2 = UDP)\n>> ").strip()
         if choice == "1":
             return socket.SOCK_STREAM
         elif choice == "2":
             return socket.SOCK_DGRAM
-        else:
-            print("Invalid choice: please enter 1 for TCP or 2 for UDP")
+        print("Invalid choice. Please enter 1 or 2.")
 
-def get_address():
+
+# ------------------- Listener Threads -------------------
+def tcp_listener(sock):
+    """Continuously listen for TCP server messages."""
     while True:
         try:
-            host_str, port_str = input("Enter SmartTV address <127.0.0.1:65431> or type 'quit' to exit:\n>> ").strip().split(":")
-            return host_str, int(port_str)
-        except ValueError:
-            print("Invalid format. Use <IP:PORT>.")
+            data = sock.recv(4096)
+            if not data:
+                safe_print("\n[SERVER] Disconnected.")
+                break
+            msg = data.decode("utf-8", "ignore").strip()
+            if msg:
+                safe_print(f"[SERVER] {msg}")
+        except Exception:
+            break
 
+
+def udp_listener(sock):
+    """Continuously listen for UDP notifications."""
+    while True:
+        try:
+            data, _ = sock.recvfrom(4096)
+            msg = data.decode("utf-8", "ignore").strip()
+            if msg:
+                safe_print(f"[SERVER] {msg}")
+        except Exception:
+            break
+
+
+# ------------------- Main Client -------------------
 def main():
     protocol = choose_protocol()
-    print(f"Selected protocol: {'TCP' if protocol == socket.SOCK_STREAM else 'UDP'}")
+    proto_name = "TCP" if protocol == socket.SOCK_STREAM else "UDP"
+    print(f"Selected protocol: {proto_name}")
 
     while True:
-        addr_input = input("Enter SmartTV address <127.0.0.1:65432> or type 'quit' to exit:\n>> ").strip()
-        if addr_input.lower() == 'quit':
-            print("Exiting client.")
+        addr_input = input("Enter SmartTV address (e.g. 127.0.0.1:65431) or 'quit' to exit:\n>> ").strip()
+        if addr_input.lower() == "quit":
+            print("Goodbye.")
             break
 
         try:
-            host_str, port_str = addr_input.split(":")
-            address = (host_str, int(port_str))
-
+            host, port_str = addr_input.split(":")
+            address = (host, int(port_str))
             s = socket.socket(socket.AF_INET, protocol)
-            if protocol == socket.SOCK_STREAM:
-                s.connect()
-            print(f"Connected to {address}")
 
+            # --- TCP ---
+            if protocol == socket.SOCK_STREAM:
+                s.connect(address)
+                print(f"Connected to {address} via TCP.")
+                threading.Thread(target=tcp_listener, args=(s,), daemon=True).start()
+
+            # --- UDP ---
+            else:
+                s.bind(("", 0))
+                local_addr = s.getsockname()
+                print(f"UDP client bound to {local_addr}, sending to {address}")
+                threading.Thread(target=udp_listener, args=(s,), daemon=True).start()
+
+            # --- Main input loop ---
             while True:
-                user_input = input(">> ").strip()
-                if user_input.lower() in ("quit", "exit"):
-                    print("Closing connection.")
+                try:
+                    cmd = input(PROMPT).strip()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nExiting client.")
                     break
-                
-                if protocol == socket.SOCK_DGRAM:
-                    s.sendto(bytes(user_input,"utf-8"),address)
-                    data, _ = s.recvfrom(4096)
-                    print(data.decode("utf-8", "ignore"))
-                elif protocol == socket.SOCK_STREAM:
-                    s.sendall(user_input.encode())
-                    response = s.recv(128).decode(errors="ignore")
-                    print(response)
-            
-            if protocol == socket.SOCK_STREAM:
-                s.close()
 
+                if not cmd:
+                    continue
+                if cmd.lower() in ("quit", "exit"):
+                    safe_print("Closing connection...")
+                    if protocol == socket.SOCK_STREAM:
+                        try:
+                            s.sendall(cmd.encode("utf-8"))
+                        except Exception:
+                            pass
+                    break
 
-            with socket.socket(socket.AF_INET, protocol) as s:
-                if protocol == socket.SOCK_STREAM:
-                    s.connect(address)
-                print(f"Connected to {address}")
+                try:
+                    if protocol == socket.SOCK_STREAM:
+                        s.sendall(cmd.encode("utf-8"))
+                    else:
+                        s.sendto(cmd.encode("utf-8"), address)
+                except Exception as e:
+                    safe_print(f"[Error] Failed to send: {e}")
+                    break
 
-                while True:
-                    user_input = input(">> ").strip()
-                    if user_input.lower() in ("quit", "exit"):
-                        print("Closing connection.")
-                        break
-
-                    s.sendall(user_input.encode())
-                    response = s.recv(128).decode(errors="ignore")
-                    print(response)
+            s.close()
+            safe_print("Connection closed.\n")
 
         except Exception as e:
-            print(f"Connection failed or lost: {e}")
-            print("You can try a new address.")
+            safe_print(f"[Connection error] {e}")
+            safe_print("Try entering a new address.\n")
+
 
 if __name__ == "__main__":
     main()
